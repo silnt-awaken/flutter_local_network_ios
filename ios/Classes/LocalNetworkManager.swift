@@ -1,67 +1,87 @@
-// LocalNetworkManager.swift
-
 import Foundation
 import Network
 
+
 class LocalNetworkManager: NSObject {
     typealias AuthResult = (Bool) -> Void
-
-    private var authResult: AuthResult?
-
-    func requestAuthorization(completion: @escaping AuthResult) {
+    
+    private
+    var authResult: AuthResult?
+    
+    private
+    var netService: NetService?
+    
+    func requestAuthorization(completion: AuthResult?) {
         authResult = completion
-        if #available(iOS 14.0, *) {
-            iOS14_requestAuthorization()
-        } else {
-            // For iOS versions below 14, local network permission is not required
+        guard #available(iOS 14, *) else {
             authResult?(true)
+            return
         }
+        iOS14_requestAuthorization()
     }
 }
 
+private var gBrowserKey: Void?
+private var gNWConnectionKey: Void?
+
 @available(iOS 14.0, *)
-private extension LocalNetworkManager {
-    func iOS14_requestAuthorization() {
-        // Replace this IP address with a known device on your local network
-        let hostIP = "10.0.0.1" // Example IP address
-        let port: UInt16 = 80 // Common port; adjust as necessary
-
-        guard let portEndpoint = NWEndpoint.Port(rawValue: port) else {
-            print("Invalid port number")
-            authResult?(false)
-            return
+private
+extension LocalNetworkManager {
+    private
+    var browser: NWBrowser? {
+        get {
+            objc_getAssociatedObject(self, &gBrowserKey) as? NWBrowser
         }
-
-        let host = NWEndpoint.Host(hostIP)
-        let parameters = NWParameters.tcp
+        set {
+            objc_setAssociatedObject(self, &gBrowserKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+    
+    func iOS14_requestAuthorization() {
+        let type = "_http._tcp"
+        // Create parameters, and allow browsing over peer-to-peer link.
+        let parameters = NWParameters()
         parameters.includePeerToPeer = true
-
-        let connection = NWConnection(host: host, port: portEndpoint, using: parameters)
-
-        connection.stateUpdateHandler = { [weak self] newState in
+        
+        // Browse for a custom service type.
+        let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: parameters)
+        self.browser = browser
+        browser.stateUpdateHandler = { newState in
             switch newState {
-            case .setup:
-                print("Connection: Setup")
-            case .waiting(let error):
-                print("Connection: Waiting (\(error))")
-            case .preparing:
-                print("Connection: Preparing")
-            case .ready:
-                print("Connection: Ready")
-                print("Local network permission granted")
-                self?.authResult?(true)
-                connection.cancel()
             case .failed(let error):
-                print("Connection: Failed (\(error))")
-                self?.authResult?(false)
-                connection.cancel()
-            case .cancelled:
-                print("Connection: Cancelled")
+                print(error.localizedDescription)
+            case .ready, .cancelled:
+                break
+            case let .waiting(error):
+                print(error.localizedDescription)
+
+                self.reset()
+                self.authResult?(false)
             default:
                 break
             }
         }
+        
+        self.netService = NetService(domain: "local.", type: type, name: "LocalNetworkPrivacy", port: 1100)
+        self.netService?.delegate = self
+        
+        self.browser?.start(queue: .main)
+        self.netService?.publish()
+    }
+    
+    func reset() {
+        self.browser?.cancel()
+        self.browser = nil
+        self.netService?.stop()
+        self.netService = nil
+    }
+}
 
-        connection.start(queue: .main)
+@available(iOS 14.0, *)
+extension LocalNetworkManager : NetServiceDelegate {
+    func netServiceDidPublish(_ sender: NetService) {
+       
+        self.reset()
+        self.authResult?(true)
     }
 }
