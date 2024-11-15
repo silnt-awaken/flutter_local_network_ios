@@ -1,87 +1,44 @@
 import Foundation
-import Network
-
 
 class LocalNetworkManager: NSObject {
     typealias AuthResult = (Bool) -> Void
-    
-    private
-    var authResult: AuthResult?
-    
-    private
-    var netService: NetService?
-    
-    func requestAuthorization(completion: AuthResult?) {
-        authResult = completion
-        guard #available(iOS 14, *) else {
-            authResult?(true)
-            return
-        }
-        iOS14_requestAuthorization()
-    }
-}
 
-private var gBrowserKey: Void?
-private var gNWConnectionKey: Void?
+    private var authResult: AuthResult?
 
-@available(iOS 14.0, *)
-private
-extension LocalNetworkManager {
-    private
-    var browser: NWBrowser? {
-        get {
-            objc_getAssociatedObject(self, &gBrowserKey) as? NWBrowser
+    func requestAuthorization(completion: @escaping AuthResult) {
+        self.authResult = completion
+        if #available(iOS 14.0, *) {
+            self.iOS14_requestAuthorization()
+        } else {
+            // Local network permission is not required below iOS 14
+            self.authResult?(true)
         }
-        set {
-            objc_setAssociatedObject(self, &gBrowserKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
-    }
-    
-    func iOS14_requestAuthorization() {
-        let type = "_http._tcp"
-        // Create parameters, and allow browsing over peer-to-peer link.
-        let parameters = NWParameters()
-        parameters.includePeerToPeer = true
-        
-        // Browse for a custom service type.
-        let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: parameters)
-        self.browser = browser
-        browser.stateUpdateHandler = { newState in
-            switch newState {
-            case .failed(let error):
-                print(error.localizedDescription)
-            case .ready, .cancelled:
-                break
-            case let .waiting(error):
-                print(error.localizedDescription)
-
-                self.reset()
-                self.authResult?(false)
-            default:
-                break
-            }
-        }
-        
-        self.netService = NetService(domain: "local.", type: type, name: "LocalNetworkPrivacy", port: 1100)
-        self.netService?.delegate = self
-        
-        self.browser?.start(queue: .main)
-        self.netService?.publish()
-    }
-    
-    func reset() {
-        self.browser?.cancel()
-        self.browser = nil
-        self.netService?.stop()
-        self.netService = nil
     }
 }
 
 @available(iOS 14.0, *)
-extension LocalNetworkManager : NetServiceDelegate {
-    func netServiceDidPublish(_ sender: NetService) {
-       
-        self.reset()
-        self.authResult?(true)
+extension LocalNetworkManager: NetServiceBrowserDelegate {
+    private func iOS14_requestAuthorization() {
+        let browser = NetServiceBrowser()
+        browser.delegate = self
+        browser.searchForServices(ofType: "_example._tcp.", inDomain: "local.")
+    }
+
+    // NetServiceBrowserDelegate methods
+
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        print("Found service: \(service)")
+        browser.stop()
+        authResult?(true)
+    }
+
+    func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
+        print("Search failed: \(errorDict)")
+        browser.stop()
+        authResult?(false)
+    }
+
+    func netServiceBrowserDidStopSearch(_ browser: NetServiceBrowser) {
+        print("Stopped browsing for services")
     }
 }
