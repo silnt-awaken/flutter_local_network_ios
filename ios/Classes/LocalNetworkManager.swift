@@ -38,7 +38,7 @@ extension LocalNetworkManager {
     }
     
     func iOS14_requestAuthorization() {
-        let type = "_paperang._tcp"
+        let type = "_http._tcp"
         // Create parameters, and allow browsing over peer-to-peer link.
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
